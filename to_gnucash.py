@@ -67,13 +67,15 @@ class MarkdownFile:
                 r'\|(?P<store>[^\|]+)'
                 r'\|(.*\|){2}\n'
                 r'(^\|{4}(.*\|){2}\n)*?'
-                r'(?=!)',
+                r'!(?P<total_price>\d+)',
                 text,
                 flags=re.MULTILINE):
             logger.debug(f'receipt text: {repr(data.group())}')
+            total_price = int(data.group('total_price'))
             # parse receipt items
             items: list[ReceiptItem] = []
-            for row in data.group().strip().split('\n'):
+            table = re.sub(r'\n!\d+$', '', data.group()).strip()
+            for row in table.split('\n'):
                 columns = row.split('|')
                 items.append(ReceiptItem(
                         name=columns[4],
@@ -88,6 +90,10 @@ class MarkdownFile:
                     store=data.group('store'),
                     items=items)
             logger.info(f'receipt: {receipt}')
+            if receipt.total_price() != total_price:
+                logger.error(
+                        'mismatch total price: '
+                        f'{receipt.store} at {receipt.datetime}')
             receipts.append(receipt)
         return receipts
 

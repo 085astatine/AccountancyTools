@@ -1,0 +1,14 @@
+[tool.mypy]
+check_untyped_defs = true
+disallow_untyped_defs = true
+strict_optional = true
+warn_redundant_casts = true
+
+[tool.pylint.messages_control]
+disable = [
+    "missing-module-docstring",  # C0114
+    "missing-class-docstring",  # C0115
+    "missing-function-docstring",  # C0116
+    "consider-using-f-string",  # C0209
+    "logging-fstring-interpolation",  # W1203
+]

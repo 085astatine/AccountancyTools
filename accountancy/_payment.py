@@ -15,7 +15,7 @@ class ReceiptItem:
     line_number: int
 
 
-@dataclasses.dataclass(frozen=True)
+@dataclasses.dataclass(frozen=True, order=True)
 class Receipt:
     # pylint: disable=too-many-instance-attributes
     year: int
@@ -23,8 +23,8 @@ class Receipt:
     day: int
     hour: int
     minute: int
-    store: str
-    items: list[ReceiptItem]
+    store: str = dataclasses.field(compare=False)
+    items: list[ReceiptItem] = dataclasses.field(compare=False)
     line_number: int
 
     @property
@@ -73,7 +73,7 @@ def parse_payment(
             parser.push(row)
         receipts.extend(parser.result())
     # sort by old...new
-    receipts.sort(key=lambda receipt: receipt.datetime)
+    receipts.sort()
     return receipts
 
 

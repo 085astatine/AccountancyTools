@@ -11,14 +11,14 @@ if TYPE_CHECKING:
 
 
 @dataclasses.dataclass(frozen=True)
-class ReceiptItem:
+class PaymentItem:
     name: str
     price: int
     line_number: int
 
 
 @dataclasses.dataclass(frozen=True, order=True)
-class Receipt:
+class Payment:
     # pylint: disable=too-many-instance-attributes
     year: int
     month: int
@@ -26,7 +26,7 @@ class Receipt:
     hour: int
     minute: int
     store: str = dataclasses.field(compare=False)
-    items: list[ReceiptItem] = dataclasses.field(compare=False)
+    items: list[PaymentItem] = dataclasses.field(compare=False)
     line_number: int
 
     @property
@@ -67,19 +67,19 @@ def parse_payment(
     lines: list[MonthlyReportLine],
     *,
     logger: Optional[logging.Logger],
-) -> list[Receipt]:
+) -> list[Payment]:
     logger = logger or logging.getLogger(__name__)
 
-    receipts: list[Receipt] = []
+    payments: list[Payment] = []
     tables = _parse_payment_table(lines, logger)
     for table in tables:
         parser = _PaymentTableParser(year, month, logger)
         for row in table:
             parser.push(row)
-        receipts.extend(parser.result())
+        payments.extend(parser.result())
     # sort by old...new
-    receipts.sort()
-    return receipts
+    payments.sort()
+    return payments
 
 
 @dataclasses.dataclass(frozen=True)
@@ -94,7 +94,7 @@ class _TableKey:
 @dataclasses.dataclass(frozen=True)
 class _TableRow:
     key: Optional[_TableKey]
-    item: Optional[ReceiptItem]
+    item: Optional[PaymentItem]
     line_number: int
 
     def is_empty(self) -> bool:
@@ -150,9 +150,9 @@ class _TableRow:
                 line_number=line.line_number,
             )
         # item
-        item: Optional[ReceiptItem] = None
+        item: Optional[PaymentItem] = None
         if row_match.group("item") is not None:
-            item = ReceiptItem(
+            item = PaymentItem(
                 name=row_match.group("item"),
                 price=int(row_match.group("price")),
                 line_number=line.line_number,
@@ -230,12 +230,12 @@ class _PaymentTableParser:
         self._month = month
         self._logger = logger
         # item
-        self._receipts: list[Receipt] = []
+        self._payments: list[Payment] = []
         # table
         self._is_last_empty = False
         self._is_before_key_empty = False
         self._table_key: Optional[_TableKey] = None
-        self._table_items: list[ReceiptItem] = []
+        self._table_items: list[PaymentItem] = []
 
     def push(self, row: _TableRow) -> None:
         # empty row
@@ -247,12 +247,12 @@ class _PaymentTableParser:
                     self._month,
                     row.line_number,
                 )
-            self._push_receipt()
+            self._push_payment()
             self._is_last_empty = True
             return
         # key
         if row.key is not None:
-            self._push_receipt()
+            self._push_payment()
             # set temporary key
             self._is_before_key_empty = self._is_last_empty
             self._table_key = row.key
@@ -263,20 +263,20 @@ class _PaymentTableParser:
         # is not empty row
         self._is_last_empty = False
 
-    def result(self) -> list[Receipt]:
-        self._push_receipt()
+    def result(self) -> list[Payment]:
+        self._push_payment()
         # empty row
         if not self._is_last_empty:
             self._logger.warning(
                 "need an empty row after: %s",
-                _last_position_message(self._receipts[-1]),
+                _last_position_message(self._payments[-1]),
             )
-        return self._receipts
+        return self._payments
 
-    def _push_receipt(self) -> None:
+    def _push_payment(self) -> None:
         if self._table_key is None:
             return
-        receipt = Receipt(
+        payment = Payment(
             year=self._year,
             month=self._month,
             day=self._table_key.day,
@@ -286,62 +286,62 @@ class _PaymentTableParser:
             items=self._table_items,
             line_number=self._table_key.line_number,
         )
-        self._logger.debug("new receipt: %s", receipt)
+        self._logger.debug("new payment: %s", payment)
         # reset temporary key & items
         self._table_key = None
         self._table_items = []
         # validate datetime
         try:
-            receipt.datetime
+            payment.datetime
         except ValueError:
             self._logger.error(
                 "invalid datetime: %s",
-                _first_position_message(receipt),
+                _first_position_message(payment),
             )
             return
         # validate order
-        if self._receipts:
-            if self._receipts[-1].datetime > receipt.datetime:
+        if self._payments:
+            if self._payments[-1].datetime > payment.datetime:
                 self._logger.warning(
                     "wrong order: %s",
-                    _first_position_message(receipt),
+                    _first_position_message(payment),
                 )
         # validate empty row
-        if self._receipts:
-            if self._receipts[-1].datetime.day < receipt.datetime.day:
+        if self._payments:
+            if self._payments[-1].datetime.day < payment.datetime.day:
                 if not self._is_before_key_empty:
                     self._logger.warning(
                         "need an empty row before: %s",
-                        _first_position_message(receipt),
+                        _first_position_message(payment),
                     )
             else:
                 if self._is_before_key_empty:
                     self._logger.warning(
                         "need not an empty row before: %s",
-                        _first_position_message(receipt),
+                        _first_position_message(payment),
                     )
         else:
             # first row
             if not self._is_before_key_empty:
                 self._logger.warning(
                     "need an empty row before: %s",
-                    _first_position_message(receipt),
+                    _first_position_message(payment),
                 )
-        # add to receipts
-        self._receipts.append(receipt)
+        # add to payments
+        self._payments.append(payment)
 
 
-def _first_position_message(receipt: Receipt) -> str:
+def _first_position_message(payment: Payment) -> str:
     return (
-        f"{receipt.to_table_rows()[0]} "
-        f"at {receipt.year:04}/{receipt.month:02}.md"
-        f":{receipt.line_number}"
+        f"{payment.to_table_rows()[0]} "
+        f"at {payment.year:04}/{payment.month:02}.md"
+        f":{payment.line_number}"
     )
 
 
-def _last_position_message(receipt: Receipt) -> str:
+def _last_position_message(payment: Payment) -> str:
     return (
-        f"{receipt.to_table_rows()[-1]} "
-        f"at {receipt.year:04}/{receipt.month:02}.md"
-        f":{receipt.last_line_number}"
+        f"{payment.to_table_rows()[-1]} "
+        f"at {payment.year:04}/{payment.month:02}.md"
+        f":{payment.last_line_number}"
     )

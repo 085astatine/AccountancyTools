@@ -6,7 +6,7 @@ import pathlib
 import re
 from typing import Literal, Optional
 
-from ._payment import Receipt, parse_payment
+from ._payment import Payment, parse_payment
 
 
 class MonthlyReport:
@@ -90,7 +90,7 @@ class MonthlyReport:
         self,
         *,
         logger: Optional[logging.Logger] = None,
-    ) -> list[Receipt]:
+    ) -> list[Payment]:
         return parse_payment(
             self.year,
             self.month,

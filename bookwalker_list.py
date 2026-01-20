@@ -27,7 +27,7 @@ def main() -> None:
         logger=logger,
     )
     # receipts
-    receipts: list[accountancy.Receipt] = []
+    receipts: list[accountancy.Payment] = []
     for report in reports:
         receipts.extend(report.payment(logger=logger))
     # books
@@ -66,7 +66,7 @@ class Book:
     line_number: int
 
 
-def is_book(item: accountancy.ReceiptItem) -> bool:
+def is_book(item: accountancy.PaymentItem) -> bool:
     return (
         item.name != "コイン利用"
         and item.name != "消費税"

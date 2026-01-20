@@ -1,9 +1,11 @@
 from __future__ import annotations
+
 import dataclasses
 import datetime
 import logging
 import re
 from typing import TYPE_CHECKING, Final, Generator, Literal, Optional
+
 if TYPE_CHECKING:
     from ._monthly_report import MonthlyReportLine
 
@@ -30,11 +32,12 @@ class Receipt:
     @property
     def datetime(self) -> datetime.datetime:
         return datetime.datetime(
-                year=self.year,
-                month=self.month,
-                day=self.day,
-                hour=self.hour,
-                minute=self.minute)
+            year=self.year,
+            month=self.month,
+            day=self.day,
+            hour=self.hour,
+            minute=self.minute,
+        )
 
     @property
     def last_line_number(self) -> int:
@@ -44,25 +47,27 @@ class Receipt:
         rows: list[str] = []
         for item in self.items:
             if rows:
-                rows.append(f'||||{item.name}|{item.price}|')
+                rows.append(f"||||{item.name}|{item.price}|")
             else:
                 rows.append(
-                        f'|{self.day}'
-                        f'|{self.hour:02}:{self.minute:02}'
-                        f'|{self.store}'
-                        f'|{item.name}|{item.price}|')
+                    f"|{self.day}"
+                    f"|{self.hour:02}:{self.minute:02}"
+                    f"|{self.store}"
+                    f"|{item.name}|{item.price}|"
+                )
         return rows
 
     def to_table(self) -> str:
-        return '\n'.join(self.to_table_rows())
+        return "\n".join(self.to_table_rows())
 
 
 def parse_payment(
-        year: int,
-        month: int,
-        lines: list[MonthlyReportLine],
-        *,
-        logger: Optional[logging.Logger]) -> list[Receipt]:
+    year: int,
+    month: int,
+    lines: list[MonthlyReportLine],
+    *,
+    logger: Optional[logging.Logger],
+) -> list[Receipt]:
     logger = logger or logging.getLogger(__name__)
 
     receipts: list[Receipt] = []
@@ -97,103 +102,110 @@ class _TableRow:
 
     @classmethod
     def parse_line(
-            cls,
-            line: MonthlyReportLine,
-            *,
-            logger: Optional[logging.Logger] = None) -> Optional[_TableRow]:
+        cls,
+        line: MonthlyReportLine,
+        *,
+        logger: Optional[logging.Logger] = None,
+    ) -> Optional[_TableRow]:
         logger = logger or logging.getLogger(__name__)
         logger.debug(
-                f'parse as {cls.__name__}'
-                f' "{line.text}" at line {line.line_number}')
+            f'parse as {cls.__name__} "{line.text}" at line {line.line_number}'
+        )
         # split
         row_match = re.match(
-                r'('
-                r'\|(?P<day>[0-9]+)'
-                r'\|(?P<hour>[0-9]{2}):(?P<minute>[0-9]{2})'
-                r'\|(?P<store>[^\|]+)'
-                r'|'
-                r'\|{3}'
-                r')'
-                r'('
-                r'\|(?P<item>[^\|]+)'
-                r'\|(?P<price>-?[0-9]+)'
-                r'\|'
-                r'|'
-                r'\|{3}'
-                r')',
-                line.text)
+            r"("
+            r"\|(?P<day>[0-9]+)"
+            r"\|(?P<hour>[0-9]{2}):(?P<minute>[0-9]{2})"
+            r"\|(?P<store>[^\|]+)"
+            r"|"
+            r"\|{3}"
+            r")"
+            r"("
+            r"\|(?P<item>[^\|]+)"
+            r"\|(?P<price>-?[0-9]+)"
+            r"\|"
+            r"|"
+            r"\|{3}"
+            r")",
+            line.text,
+        )
         if row_match is None:
-            logger.error(
-                    'failed to parse'
-                    f' "{line.text}" at line {line.line_number}')
+            logger.error(f'failed to parse "{line.text}" at line {line.line_number}')
             return None
         # key
         key: Optional[_TableKey] = None
-        if row_match.group('day') is not None:
+        if row_match.group("day") is not None:
             key = _TableKey(
-                    day=int(row_match.group('day')),
-                    hour=int(row_match.group('hour')),
-                    minute=int(row_match.group('minute')),
-                    store=row_match.group('store'),
-                    line_number=line.line_number)
+                day=int(row_match.group("day")),
+                hour=int(row_match.group("hour")),
+                minute=int(row_match.group("minute")),
+                store=row_match.group("store"),
+                line_number=line.line_number,
+            )
         # item
         item: Optional[ReceiptItem] = None
-        if row_match.group('item') is not None:
+        if row_match.group("item") is not None:
             item = ReceiptItem(
-                    name=row_match.group('item'),
-                    price=int(row_match.group('price')),
-                    line_number=line.line_number)
+                name=row_match.group("item"),
+                price=int(row_match.group("price")),
+                line_number=line.line_number,
+            )
         # row
-        row = cls(key=key, item=item, line_number=line.line_number)
-        logger.debug(f'row: {row}')
+        row = cls(
+            key=key,
+            item=item,
+            line_number=line.line_number,
+        )
+        logger.debug(f"row: {row}")
         return row
 
 
 def _filter_payment_section(
-        lines: list[MonthlyReportLine]
+    lines: list[MonthlyReportLine],
 ) -> Generator[MonthlyReportLine, None, None]:
     in_section = False
     for line in lines:
         # the line is not in payment section
         if not in_section:
-            if re.match(r'## 出費', line.text):
+            if re.match(r"## 出費", line.text):
                 in_section = True
         # the line is in paylemnt section
         else:
-            if line.text.startswith('#'):
+            if line.text.startswith("#"):
                 in_section = False
                 return
             yield line
 
 
 def _parse_payment_table(
-        lines: list[MonthlyReportLine],
-        logger: logging.Logger) -> list[list[_TableRow]]:
-    header: Final[str] = '|日|時刻|店|商品|価格|'
-    alignment: Final[str] = '|--:|--:|:--|:--|--:|'
-    state: Literal['header', 'body', 'outer'] = 'outer'
+    lines: list[MonthlyReportLine],
+    logger: logging.Logger,
+) -> list[list[_TableRow]]:
+    header: Final[str] = "|日|時刻|店|商品|価格|"
+    alignment: Final[str] = "|--:|--:|:--|:--|--:|"
+    state: Literal["header", "body", "outer"] = "outer"
     tables: list[list[_TableRow]] = []
     table: list[_TableRow] = []
     for line in _filter_payment_section(lines):
         logger.debug(f'({state}) "{line.text}" at {line.line_number}')
         match state:
-            case 'body':
+            case "body":
                 if line.text:
                     row = _TableRow.parse_line(line, logger=logger)
                     if row is not None:
                         table.append(row)
                         continue
-                state = 'outer'
+                state = "outer"
                 tables.append(table)
                 table = []
-            case 'header':
+            case "header":
                 if line.text == alignment:
-                    state = 'body'
+                    state = "body"
                 else:
                     logger.error(f'unexpected row "{line.text}"')
-            case 'outer':
+            case "outer":
                 if line.text == header:
-                    state = 'header'
+                    state = "header"
     if table:
         tables.append(table)
     return tables
@@ -202,10 +214,11 @@ def _parse_payment_table(
 class _PaymentTableParser:
     # pylint: disable=too-many-instance-attributes
     def __init__(
-            self,
-            year: int,
-            month: int,
-            logger: logging.Logger) -> None:
+        self,
+        year: int,
+        month: int,
+        logger: logging.Logger,
+    ) -> None:
         self._year = year
         self._month = month
         self._logger = logger
@@ -222,9 +235,9 @@ class _PaymentTableParser:
         if row.is_empty():
             if self._is_last_empty:
                 self._logger.warning(
-                        'consective empty row at '
-                        f'{self._year:04}/{self._month:02}.md'
-                        f':{row.line_number}')
+                    "consective empty row at "
+                    f"{self._year:04}/{self._month:02}.md:{row.line_number}"
+                )
             self._push_receipt()
             self._is_last_empty = True
             return
@@ -246,23 +259,25 @@ class _PaymentTableParser:
         # empty row
         if not self._is_last_empty:
             self._logger.warning(
-                    'need an empty row after: '
-                    f'{_last_position_message(self._receipts[-1])}')
+                "need an empty row after: "
+                f"{_last_position_message(self._receipts[-1])}"
+            )
         return self._receipts
 
     def _push_receipt(self) -> None:
         if self._table_key is None:
             return
         receipt = Receipt(
-                year=self._year,
-                month=self._month,
-                day=self._table_key.day,
-                hour=self._table_key.hour,
-                minute=self._table_key.minute,
-                store=self._table_key.store,
-                items=self._table_items,
-                line_number=self._table_key.line_number)
-        self._logger.debug(f'new receipt: {receipt}')
+            year=self._year,
+            month=self._month,
+            day=self._table_key.day,
+            hour=self._table_key.hour,
+            minute=self._table_key.minute,
+            store=self._table_key.store,
+            items=self._table_items,
+            line_number=self._table_key.line_number,
+        )
+        self._logger.debug(f"new receipt: {receipt}")
         # reset temporary key & items
         self._table_key = None
         self._table_items = []
@@ -270,43 +285,47 @@ class _PaymentTableParser:
         try:
             receipt.datetime
         except ValueError:
-            self._logger.error(
-                    f'invalid datetime: {_first_position_message(receipt)}')
+            self._logger.error(f"invalid datetime: {_first_position_message(receipt)}")
             return
         # validate order
         if self._receipts:
             if self._receipts[-1].datetime > receipt.datetime:
-                self._logger.warning(
-                        f'wrong order: {_first_position_message(receipt)}')
+                self._logger.warning(f"wrong order: {_first_position_message(receipt)}")
         # validate empty row
         if self._receipts:
             if self._receipts[-1].datetime.day < receipt.datetime.day:
                 if not self._is_before_key_empty:
                     self._logger.warning(
-                            'need an empty row before: '
-                            f'{_first_position_message(receipt)}')
+                        "need an empty row before: "
+                        f"{_first_position_message(receipt)}"
+                    )
             else:
                 if self._is_before_key_empty:
                     self._logger.warning(
-                            'need not an empty row before: '
-                            f'{_first_position_message(receipt)}')
+                        "need not an empty row before: "
+                        f"{_first_position_message(receipt)}"
+                    )
         else:
             # first row
             if not self._is_before_key_empty:
                 self._logger.warning(
-                        'need an empty row before: '
-                        f'{_first_position_message(receipt)}')
+                    f"need an empty row before: {_first_position_message(receipt)}"
+                )
         # add to receipts
         self._receipts.append(receipt)
 
 
 def _first_position_message(receipt: Receipt) -> str:
-    return (f'{receipt.to_table_rows()[0]} '
-            f'at {receipt.year:04}/{receipt.month:02}.md'
-            f':{receipt.line_number}')
+    return (
+        f"{receipt.to_table_rows()[0]} "
+        f"at {receipt.year:04}/{receipt.month:02}.md"
+        f":{receipt.line_number}"
+    )
 
 
 def _last_position_message(receipt: Receipt) -> str:
-    return (f'{receipt.to_table_rows()[-1]} '
-            f'at {receipt.year:04}/{receipt.month:02}.md'
-            f':{receipt.last_line_number}')
+    return (
+        f"{receipt.to_table_rows()[-1]} "
+        f"at {receipt.year:04}/{receipt.month:02}.md"
+        f":{receipt.last_line_number}"
+    )

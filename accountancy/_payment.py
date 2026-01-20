@@ -109,7 +109,10 @@ class _TableRow:
     ) -> Optional[_TableRow]:
         logger = logger or logging.getLogger(__name__)
         logger.debug(
-            f'parse as {cls.__name__} "{line.text}" at line {line.line_number}'
+            'parse as %s "%s" at line %d',
+            cls.__name__,
+            line.text,
+            line.line_number,
         )
         # split
         row_match = re.match(
@@ -130,7 +133,11 @@ class _TableRow:
             line.text,
         )
         if row_match is None:
-            logger.error(f'failed to parse "{line.text}" at line {line.line_number}')
+            logger.error(
+                'failed to parse "%s" at line %d',
+                line.text,
+                line.line_number,
+            )
             return None
         # key
         key: Optional[_TableKey] = None
@@ -156,7 +163,7 @@ class _TableRow:
             item=item,
             line_number=line.line_number,
         )
-        logger.debug(f"row: {row}")
+        logger.debug("row: %s", row)
         return row
 
 
@@ -202,7 +209,7 @@ def _parse_payment_table(
                 if line.text == alignment:
                     state = "body"
                 else:
-                    logger.error(f'unexpected row "{line.text}"')
+                    logger.error('unexpected row "%s"', line.text)
             case "outer":
                 if line.text == header:
                     state = "header"
@@ -235,8 +242,10 @@ class _PaymentTableParser:
         if row.is_empty():
             if self._is_last_empty:
                 self._logger.warning(
-                    "consective empty row at "
-                    f"{self._year:04}/{self._month:02}.md:{row.line_number}"
+                    "consective empty row at %05d/%02d.md:%d",
+                    self._year,
+                    self._month,
+                    row.line_number,
                 )
             self._push_receipt()
             self._is_last_empty = True
@@ -259,8 +268,8 @@ class _PaymentTableParser:
         # empty row
         if not self._is_last_empty:
             self._logger.warning(
-                "need an empty row after: "
-                f"{_last_position_message(self._receipts[-1])}"
+                "need an empty row after: %s",
+                _last_position_message(self._receipts[-1]),
             )
         return self._receipts
 
@@ -277,7 +286,7 @@ class _PaymentTableParser:
             items=self._table_items,
             line_number=self._table_key.line_number,
         )
-        self._logger.debug(f"new receipt: {receipt}")
+        self._logger.debug("new receipt: %s", receipt)
         # reset temporary key & items
         self._table_key = None
         self._table_items = []
@@ -285,31 +294,38 @@ class _PaymentTableParser:
         try:
             receipt.datetime
         except ValueError:
-            self._logger.error(f"invalid datetime: {_first_position_message(receipt)}")
+            self._logger.error(
+                "invalid datetime: %s",
+                _first_position_message(receipt),
+            )
             return
         # validate order
         if self._receipts:
             if self._receipts[-1].datetime > receipt.datetime:
-                self._logger.warning(f"wrong order: {_first_position_message(receipt)}")
+                self._logger.warning(
+                    "wrong order: %s",
+                    _first_position_message(receipt),
+                )
         # validate empty row
         if self._receipts:
             if self._receipts[-1].datetime.day < receipt.datetime.day:
                 if not self._is_before_key_empty:
                     self._logger.warning(
-                        "need an empty row before: "
-                        f"{_first_position_message(receipt)}"
+                        "need an empty row before: %s",
+                        _first_position_message(receipt),
                     )
             else:
                 if self._is_before_key_empty:
                     self._logger.warning(
-                        "need not an empty row before: "
-                        f"{_first_position_message(receipt)}"
+                        "need not an empty row before: %s",
+                        _first_position_message(receipt),
                     )
         else:
             # first row
             if not self._is_before_key_empty:
                 self._logger.warning(
-                    f"need an empty row before: {_first_position_message(receipt)}"
+                    "need an empty row before: %s",
+                    _first_position_message(receipt),
                 )
         # add to receipts
         self._receipts.append(receipt)

@@ -36,14 +36,14 @@ class MonthlyReport:
             filepath.as_posix(),
         )
         if not filepath_match:
-            logger.error(f"{filepath.as_posix()} is not YYYY/MM.md")
+            logger.error("%s is not YYYY/MM.md", filepath.as_posix())
             return None
         # year, month
         year = int(filepath_match.group("year"))
         month = int(filepath_match.group("month"))
-        logger.debug(f"year={year}, month={month}")
+        logger.debug("year=%d, month=%d", year, month)
         # load file
-        logger.debug(f'open "{filepath.as_posix()}"')
+        logger.debug('open "%s"', filepath.as_posix())
         lines: list[MonthlyReportLine] = []
         with filepath.open(encoding="utf-8") as file:
             for i, line in enumerate(file, start=1):
@@ -59,7 +59,11 @@ class MonthlyReport:
         logger.debug(f'title="{report.title()}"')
         title = f"{year}年 {month}月"
         if report.title() != title:
-            logger.warning(f'unexpected title: "{report.title()}" (expected "{title}")')
+            logger.warning(
+                'unexpected title: "%s" (expected "%s")',
+                report.title(),
+                title,
+            )
         return report
 
     @property
@@ -132,7 +136,7 @@ def _find_monthly_reports_years(
     reports: list[MonthlyReport] = []
     # check if the path is directory
     if not directory.is_dir():
-        logger.warning(f'the path "{directory.as_posix()}" is not a directory')
+        logger.warning('the path "%s" is not a directory', directory.as_posix())
         return reports
     # find YYYY
     for child in directory.iterdir():
@@ -150,11 +154,11 @@ def _find_monthly_reports_months(
     reports: list[MonthlyReport] = []
     # check if the path is directory
     if not directory.is_dir():
-        logger.warning(f'the path "{directory.as_posix()}" is not a directory')
+        logger.warning('the path "%s" is not a directory', directory.as_posix())
         return reports
     # check directory name
     if not re.match(r"[0-9]{4}", directory.name):
-        logger.warning(f'the directory name "{directory.stem}" is not YYYY')
+        logger.warning('the directory name "%s" is not YYYY', directory.stem)
     # find MM.md
     for child in directory.iterdir():
         if not child.is_file():

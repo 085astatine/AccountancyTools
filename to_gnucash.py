@@ -20,7 +20,7 @@ def main() -> None:
     option = argument_parser().parse_args()
     if option.verbose:
         logger.setLevel(logging.DEBUG)
-    logger.debug(f"option: {option}")
+    logger.debug("option: %s", option)
     # receipts
     receipts: list[Receipt] = []
     for markdown in [MarkdownFile(target) for target in option.targets]:
@@ -58,7 +58,7 @@ class MarkdownFile:
     ) -> list[Receipt]:
         logger = logger or logging.getLogger(__name__)
         # open
-        logger.debug(f"open: {self.path.as_posix()}")
+        logger.debug("open: %s", self.path.as_posix())
         with self.path.open(encoding="utf-8") as file:
             text = file.read()
         # parse text
@@ -73,7 +73,7 @@ class MarkdownFile:
             text,
             flags=re.MULTILINE,
         ):
-            logger.debug(f"receipt text: {repr(data.group())}")
+            logger.debug("receipt text: %s", repr(data.group()))
             total_price = int(data.group("total_price"))
             # parse receipt items
             items: list[ReceiptItem] = []
@@ -96,10 +96,12 @@ class MarkdownFile:
                 store=data.group("store"),
                 items=items,
             )
-            logger.info(f"receipt: {receipt}")
+            logger.info("receipt: %s", receipt)
             if receipt.total_price() != total_price:
                 logger.error(
-                    f"mismatch total price: {receipt.store} at {receipt.datetime}"
+                    "mismatch total price: %s at %s",
+                    receipt.store,
+                    receipt.datetime,
                 )
             receipts.append(receipt)
         return receipts

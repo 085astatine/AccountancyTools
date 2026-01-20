@@ -224,12 +224,14 @@ def argument_parser() -> argparse.ArgumentParser:
 def open_output(
     path: Optional[pathlib.Path] = None,
 ) -> Iterator[TextIO]:
-    output = path.open(mode="w", encoding="utf-8") if path is not None else sys.stdout
     try:
-        yield output
+        if path is None:
+            yield sys.stdout
+        else:
+            with path.open(mode="w", encoding="utf-8") as output:
+                yield output
     finally:
-        if path is not None:
-            output.close()
+        pass
 
 
 if __name__ == "__main__":

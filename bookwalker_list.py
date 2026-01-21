@@ -46,24 +46,27 @@ def main() -> None:
                     title=item.name,
                     price=item.price,
                     purchase_time=receipt.key.datetime(),
-                    line_number=item.line_number,
+                    text_line=item.text_line,
                 )
             )
     # sort by title
-    books.sort()
+    books.sort(key=lambda book: book.title)
     # output
     with open_output(option.output) as output:
         for book in books:
             purchase_date = book.purchase_time.strftime("%Y/%m/%d")
-            output.write(f"{book.title}\t{purchase_date}\t{book.line_number}\n")
+            line_number = (
+                str(book.text_line.line_number) if book.text_line is not None else "-"
+            )
+            output.write(f"{book.title}\t{purchase_date}\t{line_number}\n")
 
 
-@dataclasses.dataclass(frozen=True, order=True)
+@dataclasses.dataclass(frozen=True)
 class Book:
     title: str
     price: int
     purchase_time: datetime.datetime
-    line_number: int
+    text_line: Optional[accountancy.TextLine]
 
 
 def is_book(item: accountancy.PaymentItem) -> bool:

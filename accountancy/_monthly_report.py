@@ -1,12 +1,11 @@
 from __future__ import annotations
 
-import dataclasses
 import logging
 import pathlib
 import re
 from typing import Literal, Optional
 
-from ._payment import Payment, parse_payment
+from ._payment import Payment, TextLine, parse_payment
 
 
 class MonthlyReport:
@@ -14,7 +13,7 @@ class MonthlyReport:
         self,
         year: int,
         month: int,
-        lines: list[MonthlyReportLine],
+        lines: list[TextLine],
     ) -> None:
         self._year = year
         self._month = month
@@ -44,12 +43,13 @@ class MonthlyReport:
         logger.debug("year=%d, month=%d", year, month)
         # load file
         logger.debug('open "%s"', filepath.as_posix())
-        lines: list[MonthlyReportLine] = []
+        lines: list[TextLine] = []
         with filepath.open(encoding="utf-8") as file:
             for i, line in enumerate(file, start=1):
                 lines.append(
-                    MonthlyReportLine(
+                    TextLine(
                         text=line.removesuffix("\n"),
+                        filename=f"{year:04d}/{month:02d}.md",
                         line_number=i,
                     )
                 )
@@ -97,12 +97,6 @@ class MonthlyReport:
             self._lines,
             logger=logger,
         )
-
-
-@dataclasses.dataclass(frozen=True)
-class MonthlyReportLine:
-    text: str
-    line_number: int
 
 
 def find_monthly_reports(

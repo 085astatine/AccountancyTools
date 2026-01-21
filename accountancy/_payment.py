@@ -4,10 +4,7 @@ import dataclasses
 import datetime
 import logging
 import re
-from typing import TYPE_CHECKING, Final, Generator, Literal, Optional
-
-if TYPE_CHECKING:
-    from ._monthly_report import MonthlyReportLine
+from typing import Final, Generator, Literal, Optional, Self
 
 
 @dataclasses.dataclass(frozen=True, order=True)
@@ -46,21 +43,26 @@ class PaymentKey:
 class PaymentItem:
     name: str
     price: int
-    line_number: int
+    text_line: Optional[TextLine]
 
     def to_columns(self) -> list[str]:
         return [self.name, f"{self.price}"]
 
 
-@dataclasses.dataclass(frozen=True, order=True)
-class Payment:
-    key: PaymentKey
-    items: list[PaymentItem] = dataclasses.field(compare=False)
+@dataclasses.dataclass(frozen=True)
+class TextLine:
+    text: str
+    filename: str
     line_number: int
 
-    @property
-    def last_line_number(self) -> int:
-        return self.line_number + len(self.items) - 1
+    def message(self) -> str:
+        return f"{repr(self.text)} at {self.filename}:{self.line_number}"
+
+
+@dataclasses.dataclass(frozen=True)
+class Payment:
+    key: PaymentKey
+    items: list[PaymentItem]
 
     def to_table_rows(self) -> list[str]:
         return [
@@ -82,7 +84,7 @@ class Payment:
 def parse_payment(
     year: int,
     month: int,
-    lines: list[MonthlyReportLine],
+    lines: list[TextLine],
     *,
     logger: Optional[logging.Logger],
 ) -> list[Payment]:
@@ -96,7 +98,7 @@ def parse_payment(
             parser.push(row)
         payments.extend(parser.result())
     # sort by old...new
-    payments.sort()
+    payments.sort(key=lambda payment: payment.key)
     return payments
 
 
@@ -106,14 +108,27 @@ class _TableKey:
     hour: int
     minute: int
     store: str
-    line_number: int
+
+    def to_payment_key(
+        self,
+        year: int,
+        month: int,
+    ) -> PaymentKey:
+        return PaymentKey(
+            year=year,
+            month=month,
+            day=self.day,
+            hour=self.hour,
+            minute=self.minute,
+            store=self.store,
+        )
 
 
 @dataclasses.dataclass(frozen=True)
 class _TableRow:
     key: Optional[_TableKey]
     item: Optional[PaymentItem]
-    line_number: int
+    text_line: TextLine
 
     def is_empty(self) -> bool:
         return self.key is None and self.item is None
@@ -121,10 +136,10 @@ class _TableRow:
     @classmethod
     def parse_line(
         cls,
-        line: MonthlyReportLine,
+        line: TextLine,
         *,
         logger: Optional[logging.Logger] = None,
-    ) -> Optional[_TableRow]:
+    ) -> Optional[Self]:
         logger = logger or logging.getLogger(__name__)
         logger.debug(
             'parse as %s "%s" at line %d',
@@ -165,7 +180,6 @@ class _TableRow:
                 hour=int(row_match.group("hour")),
                 minute=int(row_match.group("minute")),
                 store=row_match.group("store"),
-                line_number=line.line_number,
             )
         # item
         item: Optional[PaymentItem] = None
@@ -173,21 +187,21 @@ class _TableRow:
             item = PaymentItem(
                 name=row_match.group("item"),
                 price=int(row_match.group("price")),
-                line_number=line.line_number,
+                text_line=line,
             )
         # row
         row = cls(
             key=key,
             item=item,
-            line_number=line.line_number,
+            text_line=line,
         )
         logger.debug("row: %s", row)
         return row
 
 
 def _filter_payment_section(
-    lines: list[MonthlyReportLine],
-) -> Generator[MonthlyReportLine, None, None]:
+    lines: list[TextLine],
+) -> Generator[TextLine, None, None]:
     in_section = False
     for line in lines:
         # the line is not in payment section
@@ -203,7 +217,7 @@ def _filter_payment_section(
 
 
 def _parse_payment_table(
-    lines: list[MonthlyReportLine],
+    lines: list[TextLine],
     logger: logging.Logger,
 ) -> list[list[_TableRow]]:
     header: Final[str] = "|日|時刻|店|商品|価格|"
@@ -260,10 +274,8 @@ class _PaymentTableParser:
         if row.is_empty():
             if self._is_last_empty:
                 self._logger.warning(
-                    "consective empty row at %05d/%02d.md:%d",
-                    self._year,
-                    self._month,
-                    row.line_number,
+                    "consective empty row: %s",
+                    row.text_line.message(),
                 )
             self._push_payment()
             self._is_last_empty = True
@@ -285,26 +297,18 @@ class _PaymentTableParser:
         self._push_payment()
         # empty row
         if not self._is_last_empty:
-            self._logger.warning(
-                "need an empty row after: %s",
-                _last_position_message(self._payments[-1]),
-            )
+            self._logger.warning("An empty row is required at the end")
         return self._payments
 
     def _push_payment(self) -> None:
         if self._table_key is None:
             return
         payment = Payment(
-            key=PaymentKey(
+            key=self._table_key.to_payment_key(
                 year=self._year,
                 month=self._month,
-                day=self._table_key.day,
-                hour=self._table_key.hour,
-                minute=self._table_key.minute,
-                store=self._table_key.store,
             ),
             items=self._table_items,
-            line_number=self._table_key.line_number,
         )
         self._logger.debug("new payment: %s", payment)
         # reset temporary key & items
@@ -352,16 +356,14 @@ class _PaymentTableParser:
 
 
 def _first_position_message(payment: Payment) -> str:
-    return (
-        f"{payment.to_table_rows()[0]} "
-        f"at {payment.key.year:04}/{payment.key.month:02}.md"
-        f":{payment.line_number}"
-    )
+    text_line = payment.items[0].text_line
+    if text_line is None:
+        return "---"
+    return text_line.message()
 
 
 def _last_position_message(payment: Payment) -> str:
-    return (
-        f"{payment.to_table_rows()[-1]} "
-        f"at {payment.key.year:04}/{payment.key.month:02}.md"
-        f":{payment.last_line_number}"
-    )
+    text_line = payment.items[-1].text_line
+    if text_line is None:
+        return "---"
+    return text_line.message()

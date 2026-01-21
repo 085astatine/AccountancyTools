@@ -34,7 +34,7 @@ def main() -> None:
     books: list[Book] = []
     for receipt in receipts:
         # filter by store
-        if receipt.store != "BOOK☆WALKER":
+        if receipt.key.store != "BOOK☆WALKER":
             continue
         # items
         for item in receipt.items:
@@ -45,7 +45,7 @@ def main() -> None:
                 Book(
                     title=item.name,
                     price=item.price,
-                    purchase_time=receipt.datetime,
+                    purchase_time=receipt.key.datetime(),
                     line_number=item.line_number,
                 )
             )

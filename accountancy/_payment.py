@@ -10,26 +10,15 @@ if TYPE_CHECKING:
     from ._monthly_report import MonthlyReportLine
 
 
-@dataclasses.dataclass(frozen=True)
-class PaymentItem:
-    name: str
-    price: int
-    line_number: int
-
-
 @dataclasses.dataclass(frozen=True, order=True)
-class Payment:
-    # pylint: disable=too-many-instance-attributes
+class PaymentKey:
     year: int
     month: int
     day: int
     hour: int
     minute: int
-    store: str = dataclasses.field(compare=False)
-    items: list[PaymentItem] = dataclasses.field(compare=False)
-    line_number: int
+    store: str
 
-    @property
     def datetime(self) -> datetime.datetime:
         return datetime.datetime(
             year=self.year,
@@ -39,23 +28,52 @@ class Payment:
             minute=self.minute,
         )
 
+    def to_columns(
+        self,
+        *,
+        skip: bool = False,
+    ) -> list[str]:
+        if skip:
+            return ["", "", ""]
+        return [
+            f"{self.day}",
+            f"{self.hour:02d}:{self.minute:02d}",
+            self.store,
+        ]
+
+
+@dataclasses.dataclass(frozen=True)
+class PaymentItem:
+    name: str
+    price: int
+    line_number: int
+
+    def to_columns(self) -> list[str]:
+        return [self.name, f"{self.price}"]
+
+
+@dataclasses.dataclass(frozen=True, order=True)
+class Payment:
+    key: PaymentKey
+    items: list[PaymentItem] = dataclasses.field(compare=False)
+    line_number: int
+
     @property
     def last_line_number(self) -> int:
         return self.line_number + len(self.items) - 1
 
     def to_table_rows(self) -> list[str]:
-        rows: list[str] = []
-        for item in self.items:
-            if rows:
-                rows.append(f"||||{item.name}|{item.price}|")
-            else:
-                rows.append(
-                    f"|{self.day}"
-                    f"|{self.hour:02}:{self.minute:02}"
-                    f"|{self.store}"
-                    f"|{item.name}|{item.price}|"
-                )
-        return rows
+        return [
+            "|".join(
+                [
+                    "",
+                    *self.key.to_columns(skip=i > 0),
+                    *item.to_columns(),
+                    "",
+                ]
+            )
+            for i, item in enumerate(self.items)
+        ]
 
     def to_table(self) -> str:
         return "\n".join(self.to_table_rows())
@@ -277,12 +295,14 @@ class _PaymentTableParser:
         if self._table_key is None:
             return
         payment = Payment(
-            year=self._year,
-            month=self._month,
-            day=self._table_key.day,
-            hour=self._table_key.hour,
-            minute=self._table_key.minute,
-            store=self._table_key.store,
+            key=PaymentKey(
+                year=self._year,
+                month=self._month,
+                day=self._table_key.day,
+                hour=self._table_key.hour,
+                minute=self._table_key.minute,
+                store=self._table_key.store,
+            ),
             items=self._table_items,
             line_number=self._table_key.line_number,
         )
@@ -292,7 +312,7 @@ class _PaymentTableParser:
         self._table_items = []
         # validate datetime
         try:
-            payment.datetime
+            payment.key.datetime()
         except ValueError:
             self._logger.error(
                 "invalid datetime: %s",
@@ -301,14 +321,14 @@ class _PaymentTableParser:
             return
         # validate order
         if self._payments:
-            if self._payments[-1].datetime > payment.datetime:
+            if self._payments[-1].key.datetime() > payment.key.datetime():
                 self._logger.warning(
                     "wrong order: %s",
                     _first_position_message(payment),
                 )
         # validate empty row
         if self._payments:
-            if self._payments[-1].datetime.day < payment.datetime.day:
+            if self._payments[-1].key.day < payment.key.day:
                 if not self._is_before_key_empty:
                     self._logger.warning(
                         "need an empty row before: %s",
@@ -334,7 +354,7 @@ class _PaymentTableParser:
 def _first_position_message(payment: Payment) -> str:
     return (
         f"{payment.to_table_rows()[0]} "
-        f"at {payment.year:04}/{payment.month:02}.md"
+        f"at {payment.key.year:04}/{payment.key.month:02}.md"
         f":{payment.line_number}"
     )
 
@@ -342,6 +362,6 @@ def _first_position_message(payment: Payment) -> str:
 def _last_position_message(payment: Payment) -> str:
     return (
         f"{payment.to_table_rows()[-1]} "
-        f"at {payment.year:04}/{payment.month:02}.md"
+        f"at {payment.key.year:04}/{payment.key.month:02}.md"
         f":{payment.last_line_number}"
     )

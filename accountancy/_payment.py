@@ -38,6 +38,19 @@ class PaymentKey:
             self.store,
         ]
 
+    @staticmethod
+    def pattern(
+        *,
+        empty: bool = False,
+    ) -> str:
+        # dd|hh:mm|store
+        date = r"(?P<day>[0-9]+)"
+        time = r"(?P<hour>[0-9]{2}):(?P<minute>[0-9]{2})"
+        store = r"(?P<store>[^|]+)"
+        if empty:
+            return r"\|{2}"
+        return rf"{date}\|{time}\|{store}"
+
 
 @dataclasses.dataclass(frozen=True)
 class PaymentItem:
@@ -47,6 +60,18 @@ class PaymentItem:
 
     def to_columns(self) -> list[str]:
         return [self.name, f"{self.price}"]
+
+    @staticmethod
+    def pattern(
+        *,
+        empty: bool = False,
+    ) -> str:
+        # item|price
+        item = r"(?P<item>[^|]+)"
+        price = r"(?P<price>-?[0-9]+)"
+        if empty:
+            return r"\|"
+        return rf"{item}\|{price}"
 
 
 @dataclasses.dataclass(frozen=True)
@@ -79,6 +104,19 @@ class Payment:
 
     def to_table(self) -> str:
         return "\n".join(self.to_table_rows())
+
+    @staticmethod
+    def pattern(
+        *,
+        allow_empty: bool = False,
+    ) -> str:
+        key = PaymentKey.pattern()
+        empty_key = PaymentKey.pattern(empty=True)
+        item = PaymentItem.pattern()
+        empty_item = PaymentItem.pattern(empty=True)
+        if allow_empty:
+            return rf"\|(({key})|({empty_key}))\|(({item})|({empty_item}))\|"
+        return rf"\|(({key})|({empty_key}))\|{item}\|"
 
 
 def parse_payment(
@@ -149,20 +187,7 @@ class _TableRow:
         )
         # split
         row_match = re.match(
-            r"("
-            r"\|(?P<day>[0-9]+)"
-            r"\|(?P<hour>[0-9]{2}):(?P<minute>[0-9]{2})"
-            r"\|(?P<store>[^\|]+)"
-            r"|"
-            r"\|{3}"
-            r")"
-            r"("
-            r"\|(?P<item>[^\|]+)"
-            r"\|(?P<price>-?[0-9]+)"
-            r"\|"
-            r"|"
-            r"\|{3}"
-            r")",
+            Payment.pattern(allow_empty=True),
             line.text,
         )
         if row_match is None:

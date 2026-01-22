@@ -6,6 +6,8 @@ import logging
 import re
 from typing import Final, Generator, Literal, Optional, Self
 
+DateFormat = Literal["YYYY/MM/DD", "D"]
+
 
 @dataclasses.dataclass(frozen=True, order=True)
 class PaymentKey:
@@ -28,12 +30,18 @@ class PaymentKey:
     def to_columns(
         self,
         *,
+        date_format: DateFormat = "D",
         skip: bool = False,
     ) -> list[str]:
         if skip:
             return ["", "", ""]
+        match date_format:
+            case "D":
+                date = f"{self.day}"
+            case "YYYY/MM/DD":
+                date = f"{self.year:04d}/{self.month:02d}/{self.day:02d}"
         return [
-            f"{self.day}",
+            date,
             f"{self.hour:02d}:{self.minute:02d}",
             self.store,
         ]
@@ -41,10 +49,15 @@ class PaymentKey:
     @staticmethod
     def pattern(
         *,
+        date_format: DateFormat = "D",
         empty: bool = False,
     ) -> str:
-        # dd|hh:mm|store
-        date = r"(?P<day>[0-9]+)"
+        # DD|hh:mm|store or YYYY/MM/DD|hh:mm|store
+        match date_format:
+            case "D":
+                date = r"(?P<day>[0-9]+)"
+            case "YYYY/MM/DD":
+                date = r"(?P<year>[0-9]{4})/(?P<month>[0-9]{2})/(?P<day>[0-9]{2})"
         time = r"(?P<hour>[0-9]{2}):(?P<minute>[0-9]{2})"
         store = r"(?P<store>[^|]+)"
         if empty:
@@ -89,12 +102,16 @@ class Payment:
     key: PaymentKey
     items: list[PaymentItem]
 
-    def to_table_rows(self) -> list[str]:
+    def to_rows(
+        self,
+        *,
+        date_format: DateFormat = "D",
+    ) -> list[str]:
         return [
             "|".join(
                 [
                     "",
-                    *self.key.to_columns(skip=i > 0),
+                    *self.key.to_columns(date_format=date_format, skip=i > 0),
                     *item.to_columns(),
                     "",
                 ]
@@ -108,10 +125,11 @@ class Payment:
     @staticmethod
     def pattern(
         *,
+        date_format: DateFormat = "D",
         allow_empty: bool = False,
     ) -> str:
-        key = PaymentKey.pattern()
-        empty_key = PaymentKey.pattern(empty=True)
+        key = PaymentKey.pattern(date_format=date_format)
+        empty_key = PaymentKey.pattern(date_format=date_format, empty=True)
         item = PaymentItem.pattern()
         empty_item = PaymentItem.pattern(empty=True)
         if allow_empty:
@@ -124,12 +142,17 @@ def parse_payment(
     month: int,
     lines: list[TextLine],
     *,
+    date_format: DateFormat = "D",
     logger: Optional[logging.Logger],
 ) -> list[Payment]:
     logger = logger or logging.getLogger(__name__)
 
     payments: list[Payment] = []
-    for table in search_payment_tables(lines, logger=logger):
+    for table in search_payment_tables(
+        lines,
+        date_format=date_format,
+        logger=logger,
+    ):
         parser = _PaymentTableParser(year, month, logger)
         for row in table.rows:
             parser.push(row)
@@ -141,6 +164,8 @@ def parse_payment(
 
 @dataclasses.dataclass(frozen=True)
 class PaymentTableKey:
+    year: Optional[int]
+    month: Optional[int]
     day: int
     hour: int
     minute: int
@@ -148,9 +173,14 @@ class PaymentTableKey:
 
     def to_payment_key(
         self,
-        year: int,
-        month: int,
-    ) -> PaymentKey:
+        *,
+        year: Optional[int] = None,
+        month: Optional[int] = None,
+    ) -> Optional[PaymentKey]:
+        year = self.year if self.year is not None else year
+        month = self.month if self.month is not None else month
+        if year is None or month is None:
+            return None
         return PaymentKey(
             year=year,
             month=month,
@@ -175,6 +205,7 @@ class PaymentTableRow:
         cls,
         line: TextLine,
         *,
+        date_format: DateFormat = "D",
         logger: Optional[logging.Logger] = None,
     ) -> Optional[Self]:
         # logger
@@ -182,7 +213,7 @@ class PaymentTableRow:
         logger.debug("Parse %s", line.message())
         # match
         match = re.match(
-            Payment.pattern(allow_empty=True),
+            Payment.pattern(date_format=date_format, allow_empty=True),
             line.text,
         )
         if match is None:
@@ -197,6 +228,8 @@ class PaymentTableRow:
         key: Optional[PaymentTableKey] = None
         if groups.get("day", None) is not None:
             key = PaymentTableKey(
+                year=int(groups["year"]) if "year" in groups else None,
+                month=int(groups["month"]) if "month" in groups else None,
                 day=int(groups["day"]),
                 hour=int(groups["hour"]),
                 minute=int(groups["minute"]),
@@ -242,6 +275,7 @@ class PaymentTable:
         cls,
         lines: list[TextLine],
         *,
+        date_format: DateFormat = "D",
         logger: Optional[logging.Logger] = None,
     ) -> Optional[Self]:
         # logger
@@ -257,7 +291,11 @@ class PaymentTable:
         # rows
         rows: list[PaymentTableRow] = []
         for line in body:
-            row = PaymentTableRow.parse_text_line(line, logger=logger)
+            row = PaymentTableRow.parse_text_line(
+                line,
+                date_format=date_format,
+                logger=logger,
+            )
             if row is None:
                 logger.error("Abort parsing on %s", line.message())
                 break
@@ -274,12 +312,19 @@ def search_payment_tables(
     *,
     header: str = PAYMENT_TABLE_HEADER,
     alignment: str = PAYMENT_TABLE_ALIGNMENT,
+    date_format: DateFormat = "D",
     logger: Optional[logging.Logger] = None,
 ) -> Generator[PaymentTable, None, None]:
     logger = logger or logging.getLogger(__name__)
     header_line: Optional[TextLine] = None
     alignment_line: Optional[TextLine] = None
     table_lines: list[TextLine] = []
+    row_pattern = re.compile(
+        Payment.pattern(
+            date_format=date_format,
+            allow_empty=True,
+        )
+    )
     for line in _filter_payment_section(lines):
         # find header
         if header_line is None:
@@ -303,12 +348,13 @@ def search_payment_tables(
                     table_lines = []
             else:
                 # rows
-                if re.match(Payment.pattern(allow_empty=True), line.text):
+                if row_pattern.match(line.text):
                     table_lines.append(line)
                 else:
                     # table
                     table = PaymentTable.parse_text_lines(
                         table_lines,
+                        date_format=date_format,
                         logger=logger,
                     )
                     if table is not None:
@@ -321,6 +367,7 @@ def search_payment_tables(
     if header_line is not None and alignment_line is not None:
         table = PaymentTable.parse_text_lines(
             table_lines,
+            date_format=date_format,
             logger=logger,
         )
         if table is not None:
@@ -397,11 +444,14 @@ class _PaymentTableParser:
     def _push_payment(self) -> None:
         if self._table_key is None:
             return
+        key = self._table_key.to_payment_key(
+            year=self._year,
+            month=self._month,
+        )
+        if key is None:
+            return
         payment = Payment(
-            key=self._table_key.to_payment_key(
-                year=self._year,
-                month=self._month,
-            ),
+            key=key,
             items=self._table_items,
         )
         self._logger.debug("new payment: %s", payment)

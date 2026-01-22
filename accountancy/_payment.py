@@ -129,10 +129,9 @@ def parse_payment(
     logger = logger or logging.getLogger(__name__)
 
     payments: list[Payment] = []
-    tables = _parse_payment_table(lines, logger)
-    for table in tables:
+    for table in search_payment_tables(lines, logger=logger):
         parser = _PaymentTableParser(year, month, logger)
-        for row in table:
+        for row in table.rows:
             parser.push(row)
         payments.extend(parser.result())
     # sort by old...new
@@ -141,7 +140,7 @@ def parse_payment(
 
 
 @dataclasses.dataclass(frozen=True)
-class _TableKey:
+class PaymentTableKey:
     day: int
     hour: int
     minute: int
@@ -163,8 +162,8 @@ class _TableKey:
 
 
 @dataclasses.dataclass(frozen=True)
-class _TableRow:
-    key: Optional[_TableKey]
+class PaymentTableRow:
+    key: Optional[PaymentTableKey]
     item: Optional[PaymentItem]
     text_line: TextLine
 
@@ -172,46 +171,43 @@ class _TableRow:
         return self.key is None and self.item is None
 
     @classmethod
-    def parse_line(
+    def parse_text_line(
         cls,
         line: TextLine,
         *,
         logger: Optional[logging.Logger] = None,
     ) -> Optional[Self]:
+        # logger
         logger = logger or logging.getLogger(__name__)
-        logger.debug(
-            'parse as %s "%s" at line %d',
-            cls.__name__,
-            line.text,
-            line.line_number,
-        )
-        # split
-        row_match = re.match(
+        logger.debug("Parse %s", line.message())
+        # match
+        match = re.match(
             Payment.pattern(allow_empty=True),
             line.text,
         )
-        if row_match is None:
+        if match is None:
             logger.error(
-                'failed to parse "%s" at line %d',
-                line.text,
-                line.line_number,
+                "Failed to parse as %s: %s",
+                cls.__name__,
+                line.message(),
             )
             return None
+        groups = match.groupdict()
         # key
-        key: Optional[_TableKey] = None
-        if row_match.group("day") is not None:
-            key = _TableKey(
-                day=int(row_match.group("day")),
-                hour=int(row_match.group("hour")),
-                minute=int(row_match.group("minute")),
-                store=row_match.group("store"),
+        key: Optional[PaymentTableKey] = None
+        if groups.get("day", None) is not None:
+            key = PaymentTableKey(
+                day=int(groups["day"]),
+                hour=int(groups["hour"]),
+                minute=int(groups["minute"]),
+                store=groups["store"],
             )
         # item
         item: Optional[PaymentItem] = None
-        if row_match.group("item") is not None:
+        if groups.get("item", None) is not None:
             item = PaymentItem(
-                name=row_match.group("item"),
-                price=int(row_match.group("price")),
+                name=groups["item"],
+                price=int(groups["price"]),
                 text_line=line,
             )
         # row
@@ -222,6 +218,113 @@ class _TableRow:
         )
         logger.debug("row: %s", row)
         return row
+
+
+PAYMENT_TABLE_HEADER: Final[str] = "|日|時刻|店|商品|価格|"
+PAYMENT_TABLE_ALIGNMENT: Final[str] = "|--:|--:|:--|:--|--:|"
+
+
+@dataclasses.dataclass(frozen=True)
+class PaymentTable:
+    header: TextLine
+    alignment: TextLine
+    rows: list[PaymentTableRow]
+
+    def to_text(self) -> str:
+        lines: list[str] = []
+        lines.append(self.header.text)
+        lines.append(self.alignment.text)
+        lines.extend(row.text_line.text for row in self.rows)
+        return "\n".join(lines)
+
+    @classmethod
+    def parse_text_lines(
+        cls,
+        lines: list[TextLine],
+        *,
+        logger: Optional[logging.Logger] = None,
+    ) -> Optional[Self]:
+        # logger
+        logger = logger or logging.getLogger(__name__)
+        # header & alignment
+        if len(lines) < 2:
+            logger.error(
+                "Payment tables must have at least 2 rows: "
+                "a header line and an alignment line"
+            )
+            return None
+        header, alignment, *body = lines
+        # rows
+        rows: list[PaymentTableRow] = []
+        for line in body:
+            row = PaymentTableRow.parse_text_line(line, logger=logger)
+            if row is None:
+                logger.error("Abort parsing on %s", line.message())
+                break
+            rows.append(row)
+        return cls(
+            header=header,
+            alignment=alignment,
+            rows=rows,
+        )
+
+
+def search_payment_tables(
+    lines: list[TextLine],
+    *,
+    header: str = PAYMENT_TABLE_HEADER,
+    alignment: str = PAYMENT_TABLE_ALIGNMENT,
+    logger: Optional[logging.Logger] = None,
+) -> Generator[PaymentTable, None, None]:
+    logger = logger or logging.getLogger(__name__)
+    header_line: Optional[TextLine] = None
+    alignment_line: Optional[TextLine] = None
+    table_lines: list[TextLine] = []
+    for line in _filter_payment_section(lines):
+        # find header
+        if header_line is None:
+            if line.text == header:
+                header_line = line
+                table_lines.append(line)
+        else:
+            # find alignment
+            if alignment_line is None:
+                if line.text == alignment:
+                    alignment_line = line
+                    table_lines.append(line)
+                else:
+                    logger.error(
+                        "An alignment line(%s) is expected but got %s",
+                        alignment,
+                        line.message(),
+                    )
+                    # reset
+                    header_line = None
+                    table_lines = []
+            else:
+                # rows
+                if re.match(Payment.pattern(allow_empty=True), line.text):
+                    table_lines.append(line)
+                else:
+                    # table
+                    table = PaymentTable.parse_text_lines(
+                        table_lines,
+                        logger=logger,
+                    )
+                    if table is not None:
+                        yield table
+                    # reset
+                    header_line = None
+                    alignment_line = None
+                    table_lines = []
+    # return last table
+    if header_line is not None and alignment_line is not None:
+        table = PaymentTable.parse_text_lines(
+            table_lines,
+            logger=logger,
+        )
+        if table is not None:
+            yield table
 
 
 def _filter_payment_section(
@@ -241,40 +344,6 @@ def _filter_payment_section(
             yield line
 
 
-def _parse_payment_table(
-    lines: list[TextLine],
-    logger: logging.Logger,
-) -> list[list[_TableRow]]:
-    header: Final[str] = "|日|時刻|店|商品|価格|"
-    alignment: Final[str] = "|--:|--:|:--|:--|--:|"
-    state: Literal["header", "body", "outer"] = "outer"
-    tables: list[list[_TableRow]] = []
-    table: list[_TableRow] = []
-    for line in _filter_payment_section(lines):
-        logger.debug(f'({state}) "{line.text}" at {line.line_number}')
-        match state:
-            case "body":
-                if line.text:
-                    row = _TableRow.parse_line(line, logger=logger)
-                    if row is not None:
-                        table.append(row)
-                        continue
-                state = "outer"
-                tables.append(table)
-                table = []
-            case "header":
-                if line.text == alignment:
-                    state = "body"
-                else:
-                    logger.error('unexpected row "%s"', line.text)
-            case "outer":
-                if line.text == header:
-                    state = "header"
-    if table:
-        tables.append(table)
-    return tables
-
-
 class _PaymentTableParser:
     # pylint: disable=too-many-instance-attributes
     def __init__(
@@ -291,10 +360,10 @@ class _PaymentTableParser:
         # table
         self._is_last_empty = False
         self._is_before_key_empty = False
-        self._table_key: Optional[_TableKey] = None
+        self._table_key: Optional[PaymentTableKey] = None
         self._table_items: list[PaymentItem] = []
 
-    def push(self, row: _TableRow) -> None:
+    def push(self, row: PaymentTableRow) -> None:
         # empty row
         if row.is_empty():
             if self._is_last_empty:

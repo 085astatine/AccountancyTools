@@ -18,6 +18,13 @@ class PaymentKey:
     minute: int
     store: str
 
+    def date(self) -> datetime.date:
+        return datetime.date(
+            year=self.year,
+            month=self.month,
+            day=self.day,
+        )
+
     def datetime(self) -> datetime.datetime:
         return datetime.datetime(
             year=self.year,
@@ -137,29 +144,6 @@ class Payment:
         return rf"\|(({key})|({empty_key}))\|{item}\|"
 
 
-def parse_payment(
-    lines: list[TextLine],
-    *,
-    date: Optional[PaymentTableDate] = None,
-    logger: Optional[logging.Logger],
-) -> list[Payment]:
-    logger = logger or logging.getLogger(__name__)
-
-    payments: list[Payment] = []
-    for table in search_payment_tables(
-        lines,
-        date=date,
-        logger=logger,
-    ):
-        parser = _PaymentTableParser(date, logger)
-        for row in table.rows:
-            parser.push(row)
-        payments.extend(parser.result())
-    # sort by old...new
-    payments.sort(key=lambda payment: payment.key)
-    return payments
-
-
 @dataclasses.dataclass(frozen=True)
 class PaymentTableDate:
     year: int
@@ -266,6 +250,7 @@ PAYMENT_TABLE_ALIGNMENT: Final[str] = "|--:|--:|:--|:--|--:|"
 
 @dataclasses.dataclass(frozen=True)
 class PaymentTable:
+    date: Optional[PaymentTableDate]
     header: TextLine
     alignment: TextLine
     rows: list[PaymentTableRow]
@@ -276,6 +261,18 @@ class PaymentTable:
         lines.append(self.alignment.text)
         lines.extend(row.text_line.text for row in self.rows)
         return "\n".join(lines)
+
+    def to_payments(
+        self,
+        *,
+        formatted: bool = False,
+        logger: Optional[logging.Logger] = None,
+    ) -> list[Payment]:
+        logger = logger or logging.Logger(__name__)
+        parser = _PaymentTableParser(self.date, formatted, logger)
+        for row in self.rows:
+            parser.push(row)
+        return parser.result()
 
     @classmethod
     def parse_text_lines(
@@ -308,10 +305,37 @@ class PaymentTable:
                 break
             rows.append(row)
         return cls(
+            date=date,
             header=header,
             alignment=alignment,
             rows=rows,
         )
+
+
+def parse_payments(
+    lines: list[TextLine],
+    *,
+    date: Optional[PaymentTableDate] = None,
+    formatted: bool = False,
+    logger: Optional[logging.Logger],
+) -> list[Payment]:
+    logger = logger or logging.getLogger(__name__)
+
+    payments: list[Payment] = []
+    for table in search_payment_tables(
+        lines,
+        date=date,
+        logger=logger,
+    ):
+        payments.extend(
+            table.to_payments(
+                formatted=formatted,
+                logger=logger,
+            )
+        )
+    # sort by old...new
+    payments.sort(key=lambda payment: payment.key)
+    return payments
 
 
 def search_payment_tables(
@@ -408,113 +432,119 @@ class _PaymentTableParser:
     def __init__(
         self,
         date: Optional[PaymentTableDate],
+        formatted: bool,
         logger: logging.Logger,
     ) -> None:
         self._date = date
+        self._formatted = formatted
         self._logger = logger
-        # item
-        self._payments: list[Payment] = []
-        # table
-        self._is_last_empty = False
-        self._is_before_key_empty = False
-        self._table_key: Optional[PaymentTableKey] = None
-        self._table_items: list[PaymentItem] = []
+        # parse
+        self._result: list[Payment] = []
+        self._last_row: Optional[PaymentTableRow] = None
+        self._payment: Optional[Payment] = None
 
-    def push(self, row: PaymentTableRow) -> None:
+    def push(
+        self,
+        row: PaymentTableRow,
+    ) -> None:
+        # update last row
+        last_row, self._last_row = self._last_row, row
         # empty row
-        if row.is_empty():
-            if self._is_last_empty:
-                self._logger.warning(
-                    "consective empty row: %s",
-                    row.text_line.message(),
+        if row.key is None and row.item is None:
+            if self._payment is not None:
+                self._result.append(self._payment)
+                self._payment = None
+            # format check: consecutive empty rows
+            if last_row is not None:
+                self._format_check(
+                    last_row.is_empty(),
+                    "Consecutive empty rows",
+                    row.text_line,
                 )
-            self._push_payment()
-            self._is_last_empty = True
-            return
-        # key
-        if row.key is not None:
-            self._push_payment()
-            # set temporary key
-            self._is_before_key_empty = self._is_last_empty
-            self._table_key = row.key
-        # item
-        if row.item is not None:
-            # set item
-            self._table_items.append(row.item)
-        # is not empty row
-        self._is_last_empty = False
+        else:
+            # format check: first row is empty
+            self._format_check(
+                last_row is None,
+                "The first row is not empty",
+                row.text_line,
+            )
+            # key & item
+            if row.key is not None and row.item is not None:
+                if self._payment is not None:
+                    self._result.append(self._payment)
+                    self._payment = None
+                key = row.key.to_payment_key(date=self._date)
+                if key is None:
+                    self._logger.error(
+                        "Failed to parse a key: %s", row.text_line.message()
+                    )
+                    return
+                # check: key has valid datetime
+                try:
+                    key.datetime()
+                except ValueError:
+                    self._logger.error(
+                        "Invalid datetime: %s",
+                        row.text_line.message(),
+                    )
+                    return
+                # format check: The timeline is wrong
+                if self._result:
+                    # format check: The timeline is wrong
+                    self._format_check(
+                        self._result[-1].key.datetime() > key.datetime(),
+                        "The timeline is wrong",
+                        row.text_line,
+                    )
+                    # format check: An empty row is required between days
+                    self._format_check(
+                        self._result[-1].key.date() != key.date()
+                        and last_row is not None
+                        and not last_row.is_empty(),
+                        "An empty row is required between days",
+                        row.text_line,
+                    )
+                self._payment = Payment(
+                    key=key,
+                    items=[row.item],
+                )
+            # item
+            elif row.item is not None:
+                if self._payment is not None:
+                    self._payment.items.append(row.item)
+            else:
+                pass
+                # error: item only
 
     def result(self) -> list[Payment]:
-        self._push_payment()
-        # empty row
-        if not self._is_last_empty:
-            self._logger.warning("An empty row is required at the end")
-        return self._payments
-
-    def _push_payment(self) -> None:
-        if self._table_key is None:
-            return
-        key = self._table_key.to_payment_key(date=self._date)
-        if key is None:
-            return
-        payment = Payment(
-            key=key,
-            items=self._table_items,
-        )
-        self._logger.debug("new payment: %s", payment)
-        # reset temporary key & items
-        self._table_key = None
-        self._table_items = []
-        # validate datetime
-        try:
-            payment.key.datetime()
-        except ValueError:
-            self._logger.error(
-                "invalid datetime: %s",
-                _first_position_message(payment),
+        # format check
+        if self._last_row is not None:
+            # format check: last row is empty
+            self._format_check(
+                not self._last_row.is_empty(),
+                "An empty row is required at the end",
+                self._last_row.text_line,
             )
-            return
-        # validate order
-        if self._payments:
-            if self._payments[-1].key.datetime() > payment.key.datetime():
-                self._logger.warning(
-                    "wrong order: %s",
-                    _first_position_message(payment),
-                )
-        # validate empty row
-        if self._payments:
-            if self._payments[-1].key.day < payment.key.day:
-                if not self._is_before_key_empty:
-                    self._logger.warning(
-                        "need an empty row before: %s",
-                        _first_position_message(payment),
-                    )
-            else:
-                if self._is_before_key_empty:
-                    self._logger.warning(
-                        "need not an empty row before: %s",
-                        _first_position_message(payment),
-                    )
         else:
-            # first row
-            if not self._is_before_key_empty:
-                self._logger.warning(
-                    "need an empty row before: %s",
-                    _first_position_message(payment),
-                )
-        # add to payments
-        self._payments.append(payment)
+            # format check: empty table
+            self._format_check(
+                self._last_row is None,
+                "Payment table is empty",
+                None,
+            )
+        # add the last payment to result
+        if self._payment is not None:
+            self._result.append(self._payment)
+        return self._result
 
-
-def _first_position_message(payment: Payment) -> str:
-    text_line = payment.items[0].text_line
-    if text_line is None:
-        return "---"
-    return text_line.message()
-
-
-def _last_position_message(payment: Payment) -> str:
-    text_line = payment.items[-1].text_line
-    if text_line is None:
-        return "---"
-    return text_line.message()
+    def _format_check(
+        self,
+        has_error: bool,
+        message: str,
+        line: Optional[TextLine],
+    ) -> None:
+        if self._formatted and has_error:
+            if line is not None:
+                self._logger.warning("%s: %s", message, line.message())
+            else:
+                self._logger.warning(message)

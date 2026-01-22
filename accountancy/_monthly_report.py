@@ -5,7 +5,7 @@ import pathlib
 import re
 from typing import Literal, Optional
 
-from ._payment import Payment, TextLine, parse_payment
+from ._payment import Payment, PaymentTableDate, TextLine, parse_payment
 
 
 class MonthlyReport:
@@ -92,9 +92,11 @@ class MonthlyReport:
         logger: Optional[logging.Logger] = None,
     ) -> list[Payment]:
         return parse_payment(
-            self.year,
-            self.month,
             self._lines,
+            date=PaymentTableDate(
+                year=self.year,
+                month=self.month,
+            ),
             logger=logger,
         )
 

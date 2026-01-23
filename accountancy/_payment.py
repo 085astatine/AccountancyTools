@@ -583,3 +583,32 @@ def to_payment_table(
     if formatted:
         lines.append(empty_row)
     return lines
+
+
+def group_payments_by_date(
+    payments: list[Payment],
+) -> list[tuple[PaymentTableDate, list[Payment]]]:
+    # sort by date
+    payments.sort(key=lambda payment: payment.key)
+    # split
+    result: list[tuple[PaymentTableDate, list[Payment]]] = []
+    last: Optional[Payment] = None
+    for payment in payments:
+        if (
+            last is not None
+            and last.key.year == payment.key.year
+            and last.key.month == payment.key.month
+        ):
+            result[-1][1].append(payment)
+        else:
+            result.append(
+                (
+                    PaymentTableDate(
+                        year=payment.key.year,
+                        month=payment.key.month,
+                    ),
+                    [payment],
+                )
+            )
+        last = payment
+    return result

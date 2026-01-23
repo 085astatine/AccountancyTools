@@ -126,8 +126,9 @@ class Payment:
             for i, item in enumerate(self.items)
         ]
 
-    def to_table(self) -> str:
-        return "\n".join(self.to_table_rows())
+    @staticmethod
+    def empty_row() -> str:
+        return "||||||"
 
     @staticmethod
     def pattern(
@@ -548,3 +549,37 @@ class _PaymentTableParser:
                 self._logger.warning("%s: %s", message, line.message())
             else:
                 self._logger.warning(message)
+
+
+def to_payment_table(
+    payments: list[Payment],
+    *,
+    header: str = PAYMENT_TABLE_HEADER,
+    alignment: str = PAYMENT_TABLE_ALIGNMENT,
+    date_format: DateFormat = "YYYY/MM/DD",
+    formatted: bool = False,
+) -> list[str]:
+    lines: list[str] = []
+    last_payment: Optional[Payment] = None
+    empty_row = Payment.empty_row()
+    # write header & alignment
+    lines.append(header)
+    lines.append(alignment)
+    # first empty row
+    if formatted:
+        lines.append(empty_row)
+    # payments
+    for payment in payments:
+        # empty row between days
+        if (
+            formatted
+            and last_payment is not None
+            and last_payment.key.date() != payment.key.date()
+        ):
+            lines.append(empty_row)
+        lines.extend(payment.to_rows(date_format=date_format))
+        last_payment = payment
+    # last empty row
+    if formatted:
+        lines.append(empty_row)
+    return lines

@@ -11,7 +11,7 @@ import pathlib
 import sys
 from typing import Iterator, Optional, TextIO
 
-import accountancy
+from accountancy import Payment, PaymentItem, TextLine, find_monthly_reports
 
 
 def main() -> None:
@@ -22,22 +22,22 @@ def main() -> None:
     if option.verbose:
         logger.setLevel(logging.DEBUG)
     # load reports
-    reports = accountancy.find_monthly_reports(
+    reports = find_monthly_reports(
         option.target,
         logger=logger,
     )
-    # receipts
-    receipts: list[accountancy.Payment] = []
+    # payments
+    payments: list[Payment] = []
     for report in reports:
-        receipts.extend(report.payments(logger=logger))
+        payments.extend(report.payments(logger=logger))
     # books
     books: list[Book] = []
-    for receipt in receipts:
+    for payment in payments:
         # filter by store
-        if receipt.key.store != "BOOK☆WALKER":
+        if payment.key.store != "BOOK☆WALKER":
             continue
         # items
-        for item in receipt.items:
+        for item in payment.items:
             # filter by item name
             if not is_book(item):
                 continue
@@ -45,7 +45,7 @@ def main() -> None:
                 Book(
                     title=item.name,
                     price=item.price,
-                    purchase_time=receipt.key.datetime(),
+                    purchase_time=payment.key.datetime(),
                     text_line=item.text_line,
                 )
             )
@@ -66,10 +66,10 @@ class Book:
     title: str
     price: int
     purchase_time: datetime.datetime
-    text_line: Optional[accountancy.TextLine]
+    text_line: Optional[TextLine]
 
 
-def is_book(item: accountancy.PaymentItem) -> bool:
+def is_book(item: PaymentItem) -> bool:
     return (
         item.name != "コイン利用"
         and item.name != "消費税"

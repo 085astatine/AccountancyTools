@@ -76,7 +76,7 @@ class PaymentKey:
 class PaymentItem:
     name: str
     price: int
-    text_line: Optional[TextLine]
+    text_line: Optional[TextLine] = None
 
     def to_columns(self) -> list[str]:
         return [self.name, f"{self.price}"]
@@ -108,6 +108,9 @@ class TextLine:
 class Payment:
     key: PaymentKey
     items: list[PaymentItem]
+
+    def total_price(self) -> int:
+        return sum(item.price for item in self.items)
 
     def to_rows(
         self,

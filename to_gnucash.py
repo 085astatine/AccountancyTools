@@ -5,12 +5,13 @@ from __future__ import annotations
 import argparse
 import contextlib
 import dataclasses
-import datetime
 import logging
 import pathlib
 import re
 import sys
 from typing import Iterator, Optional, TextIO
+
+from accountancy import Payment, PaymentItem, PaymentKey
 
 
 def main() -> None:
@@ -21,12 +22,12 @@ def main() -> None:
     if option.verbose:
         logger.setLevel(logging.DEBUG)
     logger.debug("option: %s", option)
-    # receipts
-    receipts: list[Receipt] = []
+    # payments
+    payments: list[Payment] = []
     for markdown in [MarkdownFile(target) for target in option.targets]:
-        receipts.extend(markdown.receipts(logger=logger))
+        payments.extend(markdown.payments(logger=logger))
     # output
-    output_as_csv(receipts, path=option.output)
+    output_as_csv(payments, path=option.output)
 
 
 class InvalidMarkdownFileError(Exception):
@@ -51,60 +52,58 @@ class MarkdownFile:
     def year(self) -> int:
         return int(self.path.parent.name)
 
-    def receipts(
+    def payments(
         self,
         *,
         logger: logging.Logger,
-    ) -> list[Receipt]:
+    ) -> list[Payment]:
         logger = logger or logging.getLogger(__name__)
         # open
         logger.debug("open: %s", self.path.as_posix())
-        with self.path.open(encoding="utf-8") as file:
-            text = file.read()
+        text = self.path.read_text(encoding="utf-8")
         # parse text
-        receipts: list[Receipt] = []
+        payments: list[Payment] = []
         for data in re.finditer(
-            r"^\|(?P<day>\d+)"
-            r"\|(?P<hour>\d{2}):(?P<minute>\d{2})"
-            r"\|(?P<store>[^\|]+)"
-            r"\|(.*\|){2}\n"
+            rf"^\|{PaymentKey.pattern(date_format='D')}\|(.*\|){{2}}\n"
             r"(^\|{4}(.*\|){2}\n)*?"
             r"!(?P<total_price>\d+)",
             text,
             flags=re.MULTILINE,
         ):
-            logger.debug("receipt text: %s", repr(data.group()))
+            logger.debug("payment text: %s", repr(data.group()))
             total_price = int(data.group("total_price"))
-            # parse receipt items
-            items: list[ReceiptItem] = []
+            # parse payment items
+            items: list[PaymentItem] = []
             table = re.sub(r"\n!\d+$", "", data.group()).strip()
             for row in table.split("\n"):
                 columns = row.split("|")
                 items.append(
-                    ReceiptItem(
+                    PaymentItem(
                         name=columns[4],
                         price=int(columns[5]),
                     ),
                 )
-            # receipt
-            receipt = Receipt(
-                year=self.year,
-                month=self.month,
-                day=int(data.group("day")),
-                hour=int(data.group("hour")),
-                minute=int(data.group("minute")),
-                store=data.group("store"),
+            # payment
+            payment = Payment(
+                key=PaymentKey(
+                    year=self.year,
+                    month=self.month,
+                    day=int(data.group("day")),
+                    hour=int(data.group("hour")),
+                    minute=int(data.group("minute")),
+                    store=data.group("store"),
+                ),
                 items=items,
             )
-            logger.info("receipt: %s", receipt)
-            if receipt.total_price() != total_price:
+            logger.info("payment: %s", payment)
+            if payment.total_price() != total_price:
                 logger.error(
                     "mismatch total price: %s at %s",
-                    receipt.store,
-                    receipt.datetime,
+                    payment.key.store,
+                    payment.key.datetime(),
                 )
-            receipts.append(receipt)
-        return receipts
+            payments.append(payment)
+        return payments
 
     def _validate(self) -> None:
         # check if the path exists
@@ -124,57 +123,27 @@ class MarkdownFile:
             )
 
 
-@dataclasses.dataclass
-class ReceiptItem:
-    name: str
-    price: int
-
-
-@dataclasses.dataclass
-class Receipt:
-    year: int
-    month: int
-    day: int
-    hour: int
-    minute: int
-    store: str
-    items: list[ReceiptItem]
-
-    @property
-    def datetime(self) -> datetime.datetime:
-        return datetime.datetime(
-            year=self.year,
-            month=self.month,
-            day=self.day,
-            hour=self.hour,
-            minute=self.minute,
-        )
-
-    def total_price(self) -> int:
-        return sum(item.price for item in self.items)
-
-
 def output_as_csv(
-    receipts: list[Receipt],
+    payments: list[Payment],
     *,
     path: Optional[pathlib.Path] = None,
 ) -> None:
     records: list[str] = []
     last_number: Optional[str] = None
-    for receipt in receipts:
+    for payment in payments:
         # date
-        date = receipt.datetime.strftime("%Y-%m-%d")
+        date = payment.key.datetime().strftime("%Y-%m-%d")
         # number
-        number = receipt.datetime.strftime("%Y%m%d%H%M")
+        number = payment.key.datetime().strftime("%Y%m%d%H%M")
         if last_number is not None and last_number.startswith(number):
             number = f"{last_number}#"
         last_number = number
         # total place
-        total_price = receipt.total_price()
+        total_price = payment.total_price()
         # date, number, description, account, value
         records.extend(
             [
-                f"{date},{number},{receipt.store},item,{total_price}",
+                f"{date},{number},{payment.key.store},item,{total_price}",
                 f",,,payment,{-total_price}",
             ]
         )

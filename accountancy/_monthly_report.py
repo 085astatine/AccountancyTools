@@ -43,16 +43,7 @@ class MonthlyReport:
         logger.debug("year=%d, month=%d", year, month)
         # load file
         logger.debug('open "%s"', filepath.as_posix())
-        lines: list[TextLine] = []
-        with filepath.open(encoding="utf-8") as file:
-            for i, line in enumerate(file, start=1):
-                lines.append(
-                    TextLine(
-                        text=line.removesuffix("\n"),
-                        filename=f"{year:04d}/{month:02d}.md",
-                        line_number=i,
-                    )
-                )
+        lines = TextLine.load_file(filepath)
         # generate
         report = cls(year, month, lines)
         # validate title

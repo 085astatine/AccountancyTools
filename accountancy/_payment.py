@@ -3,6 +3,7 @@ from __future__ import annotations
 import dataclasses
 import datetime
 import logging
+import pathlib
 import re
 from typing import Final, Generator, Literal, Optional, Self
 
@@ -102,6 +103,20 @@ class TextLine:
 
     def message(self) -> str:
         return f"{repr(self.text)} at {self.filename}:{self.line_number}"
+
+    @classmethod
+    def load_file(cls, path: pathlib.Path) -> list[Self]:
+        lines: list[Self] = []
+        with path.open(encoding="utf-8") as file:
+            for i, line in enumerate(file, start=1):
+                lines.append(
+                    cls(
+                        text=line.removesuffix("\n"),
+                        filename=path.as_posix(),
+                        line_number=i,
+                    )
+                )
+        return lines
 
 
 @dataclasses.dataclass(frozen=True)

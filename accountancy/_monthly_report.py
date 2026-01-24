@@ -3,7 +3,7 @@ from __future__ import annotations
 import logging
 import pathlib
 import re
-from typing import Literal, Optional
+from typing import Generator, Literal, Optional, Self
 
 from ._payment import Payment, PaymentTableDate, TextLine, parse_payments
 
@@ -25,7 +25,7 @@ class MonthlyReport:
         filepath: pathlib.Path,
         *,
         logger: Optional[logging.Logger] = None,
-    ) -> Optional[MonthlyReport]:
+    ) -> Optional[Self]:
         filepath = filepath.resolve()
         logger = logger or logging.getLogger(__name__)
         logger.info(f'load "{filepath.as_posix()}"')
@@ -86,13 +86,13 @@ class MonthlyReport:
                 return title_match.group("title")
         return None
 
-    def payment(
+    def payments(
         self,
         *,
         logger: Optional[logging.Logger] = None,
     ) -> list[Payment]:
         return parse_payments(
-            self._lines,
+            list(_filter_payment_section(self._lines)),
             date=PaymentTableDate(
                 year=self.year,
                 month=self.month,
@@ -100,6 +100,23 @@ class MonthlyReport:
             formatted=True,
             logger=logger,
         )
+
+
+def _filter_payment_section(
+    lines: list[TextLine],
+) -> Generator[TextLine, None, None]:
+    in_section = False
+    for line in lines:
+        # the line is not in payment section
+        if not in_section:
+            if re.match(r"## 出費", line.text):
+                in_section = True
+        # the line is in paylemnt section
+        else:
+            if line.text.startswith("#"):
+                in_section = False
+                return
+            yield line
 
 
 def find_monthly_reports(

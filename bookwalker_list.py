@@ -29,7 +29,7 @@ def main() -> None:
     # receipts
     receipts: list[accountancy.Payment] = []
     for report in reports:
-        receipts.extend(report.payment(logger=logger))
+        receipts.extend(report.payments(logger=logger))
     # books
     books: list[Book] = []
     for receipt in receipts:

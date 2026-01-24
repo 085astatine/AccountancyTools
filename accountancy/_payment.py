@@ -357,7 +357,7 @@ def search_payment_tables(
             allow_empty=True,
         )
     )
-    for line in _filter_payment_section(lines):
+    for line in lines:
         # find header
         if header_line is None:
             if line.text == header:
@@ -404,23 +404,6 @@ def search_payment_tables(
         )
         if table is not None:
             yield table
-
-
-def _filter_payment_section(
-    lines: list[TextLine],
-) -> Generator[TextLine, None, None]:
-    in_section = False
-    for line in lines:
-        # the line is not in payment section
-        if not in_section:
-            if re.match(r"## 出費", line.text):
-                in_section = True
-        # the line is in paylemnt section
-        else:
-            if line.text.startswith("#"):
-                in_section = False
-                return
-            yield line
 
 
 def _to_date_format(date: Optional[PaymentTableDate]) -> DateFormat:

@@ -101,7 +101,7 @@ class TextLine:
     filename: str
     line_number: int
 
-    def message(self) -> str:
+    def __str__(self) -> str:
         return f"{repr(self.text)} at {self.filename}:{self.line_number}"
 
     @classmethod
@@ -214,18 +214,14 @@ class PaymentTableRow:
     ) -> Optional[Self]:
         # logger
         logger = logger or logging.getLogger(__name__)
-        logger.debug("Parse %s", line.message())
+        logger.debug("Parse %s", line)
         # match
         match = re.match(
             Payment.pattern(date_format=_to_date_format(date), allow_empty=True),
             line.text,
         )
         if match is None:
-            logger.error(
-                "Failed to parse as %s: %s",
-                cls.__name__,
-                line.message(),
-            )
+            logger.error("Failed to parse as %s: %s", cls.__name__, line)
             return None
         groups = match.groupdict()
         # key
@@ -320,7 +316,7 @@ class PaymentTable:
                 logger=logger,
             )
             if row is None:
-                logger.error("Abort parsing on %s", line.message())
+                logger.error("Abort parsing on %s", line)
                 break
             rows.append(row)
         return cls(
@@ -391,7 +387,7 @@ def search_payment_tables(
                     logger.error(
                         "An alignment line(%s) is expected but got %s",
                         alignment,
-                        line.message(),
+                        line,
                     )
                     # reset
                     header_line = None
@@ -477,9 +473,7 @@ class _PaymentTableParser:
                     self._payment = None
                 key = row.key.to_payment_key(date=self._date)
                 if key is None:
-                    self._logger.error(
-                        "Failed to parse a key: %s", row.text_line.message()
-                    )
+                    self._logger.error("Failed to parse a key: %s", row.text_line)
                     return
                 # check: key has valid datetime
                 try:
@@ -487,7 +481,7 @@ class _PaymentTableParser:
                 except ValueError:
                     self._logger.error(
                         "Invalid datetime: %s",
-                        row.text_line.message(),
+                        row.text_line,
                     )
                     return
                 # format check: The timeline is wrong
@@ -547,7 +541,7 @@ class _PaymentTableParser:
     ) -> None:
         if self._formatted and has_error:
             if line is not None:
-                self._logger.warning("%s: %s", message, line.message())
+                self._logger.warning("%s: %s", message, line)
             else:
                 self._logger.warning(message)
 

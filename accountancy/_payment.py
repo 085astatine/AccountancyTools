@@ -104,6 +104,15 @@ class TextLine:
     def __str__(self) -> str:
         return f"{repr(self.text)} at {self.filename}:{self.line_number}"
 
+    def slice(self, substring: str) -> Optional[Self]:
+        if substring not in self.text:
+            return None
+        return type(self)(
+            text=substring,
+            filename=self.filename,
+            line_number=self.line_number,
+        )
+
     @classmethod
     def load_file(cls, path: pathlib.Path) -> list[Self]:
         lines: list[Self] = []

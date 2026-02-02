@@ -519,8 +519,12 @@ class _PaymentTableParser:
                 "The first row is not empty",
                 row.text_line,
             )
+            # key only
+            if row.item is None:
+                self._logger.error("The row has only the key: %s", row.text_line)
+                return
             # key & item
-            if row.key is not None and row.item is not None:
+            if row.key is not None:
                 if self._payment is not None:
                     self._result.append(self._payment)
                     self._payment = None
@@ -555,15 +559,13 @@ class _PaymentTableParser:
                     )
                 self._payment = Payment(
                     key=key,
-                    items=[row.item],
+                    items=[],
                 )
-            # item
-            elif row.item is not None:
-                if self._payment is not None:
-                    self._payment.items.append(row.item)
+            # add item to payment
+            if self._payment is not None:
+                self._payment.items.append(row.item)
             else:
-                pass
-                # error: item only
+                self._logger.error("The item has no related key: %s", row.text_line)
 
     def result(self) -> list[Payment]:
         # format check

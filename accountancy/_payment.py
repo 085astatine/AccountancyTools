@@ -498,6 +498,7 @@ class _PaymentTableParser:
         self,
         row: PaymentTableRow,
     ) -> None:
+        # pylint: disable=too-many-branches
         # update last row
         last_row, self._last_row = self._last_row, row
         # empty row
@@ -564,6 +565,17 @@ class _PaymentTableParser:
             # add item to payment
             if self._payment is not None:
                 self._payment.items.append(row.item)
+                # check: annotations
+                if row.annotations is not None:
+                    # check: subtotal
+                    if row.annotations.subtotal is not None:
+                        if self._payment.total_price() != row.annotations.subtotal:
+                            self._logger.warning(
+                                "Mismatch subtotals between sum(%d) and annotation(%d): %s",
+                                self._payment.total_price(),
+                                row.annotations.subtotal,
+                                row.text_line,
+                            )
             else:
                 self._logger.error("The item has no related key: %s", row.text_line)
 

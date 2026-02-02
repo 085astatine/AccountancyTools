@@ -163,13 +163,15 @@ class Payment:
         date_format: DateFormat = "D",
         allow_empty: bool = False,
     ) -> str:
+        # key: YYYY/MM/DD|hh:mm|store or |D|hh:mm|store or |||
         key = PaymentKey.pattern(date_format=date_format)
         empty_key = PaymentKey.pattern(date_format=date_format, empty=True)
+        key_pattern = rf"(({key})|({empty_key}))"
+        # item: item|price
         item = PaymentItem.pattern()
         empty_item = PaymentItem.pattern(empty=True)
-        if allow_empty:
-            return rf"\|(({key})|({empty_key}))\|(({item})|({empty_item}))\|"
-        return rf"\|(({key})|({empty_key}))\|{item}\|"
+        item_pattern = rf"(({item})|({empty_item}))" if allow_empty else item
+        return rf"\|{key_pattern}\|{item_pattern}\|(?P<annotations>.+)?"
 
 
 @dataclasses.dataclass(frozen=True)
@@ -205,10 +207,41 @@ class PaymentTableKey:
 
 
 @dataclasses.dataclass(frozen=True)
+class PaymentTableRowAnnotations:
+    subtotal: Optional[int] = None
+
+    @classmethod
+    def parse_text_line(
+        cls,
+        text_line: TextLine,
+        *,
+        logger: Optional[logging.Logger] = None,
+    ) -> Optional[Self]:
+        logger = logger or logging.Logger(__name__)
+        annotations = {}
+        # split text
+        for arg in (arg.strip(" ") for arg in text_line.text.split(",")):
+            # subtotal
+            if match := re.fullmatch(r"=(?P<subtotal>-?[0-9]+)", arg):
+                if "subtotal" in annotations:
+                    logger.warning(
+                        "There are multiple subtotal annoations: %s",
+                        text_line,
+                    )
+                annotations["subtotal"] = int(match.group("subtotal"))
+            # unexpected annotation
+            else:
+                logger.error("Unexpected annotation %s %s", repr(arg), text_line)
+                return None
+        return cls(**annotations)
+
+
+@dataclasses.dataclass(frozen=True)
 class PaymentTableRow:
     key: Optional[PaymentTableKey]
     item: Optional[PaymentItem]
     text_line: TextLine
+    annotations: Optional[PaymentTableRowAnnotations] = None
 
     def is_empty(self) -> bool:
         return self.key is None and self.item is None
@@ -258,11 +291,22 @@ class PaymentTableRow:
                 price=int(groups["price"]),
                 text_line=line,
             )
+        # annotations
+        annotations: Optional[PaymentTableRowAnnotations] = None
+        if (
+            groups.get("annotations", None) is not None
+            and (annotations_text := line.slice(groups["annotations"])) is not None
+        ):
+            annotations = PaymentTableRowAnnotations.parse_text_line(
+                annotations_text,
+                logger=logger,
+            )
         # row
         row = cls(
             key=key,
             item=item,
             text_line=line,
+            annotations=annotations,
         )
         logger.debug("row: %s", row)
         return row

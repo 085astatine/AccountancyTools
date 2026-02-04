@@ -101,8 +101,17 @@ class TextLine:
     filename: str
     line_number: int
 
-    def message(self) -> str:
+    def __str__(self) -> str:
         return f"{repr(self.text)} at {self.filename}:{self.line_number}"
+
+    def slice(self, substring: str) -> Optional[Self]:
+        if substring not in self.text:
+            return None
+        return type(self)(
+            text=substring,
+            filename=self.filename,
+            line_number=self.line_number,
+        )
 
     @classmethod
     def load_file(cls, path: pathlib.Path) -> list[Self]:
@@ -154,13 +163,15 @@ class Payment:
         date_format: DateFormat = "D",
         allow_empty: bool = False,
     ) -> str:
+        # key: YYYY/MM/DD|hh:mm|store or |D|hh:mm|store or |||
         key = PaymentKey.pattern(date_format=date_format)
         empty_key = PaymentKey.pattern(date_format=date_format, empty=True)
+        key_pattern = rf"(({key})|({empty_key}))"
+        # item: item|price
         item = PaymentItem.pattern()
         empty_item = PaymentItem.pattern(empty=True)
-        if allow_empty:
-            return rf"\|(({key})|({empty_key}))\|(({item})|({empty_item}))\|"
-        return rf"\|(({key})|({empty_key}))\|{item}\|"
+        item_pattern = rf"(({item})|({empty_item}))" if allow_empty else item
+        return rf"\|{key_pattern}\|{item_pattern}\|(?P<annotations>.+)?"
 
 
 @dataclasses.dataclass(frozen=True)
@@ -196,10 +207,41 @@ class PaymentTableKey:
 
 
 @dataclasses.dataclass(frozen=True)
+class PaymentTableRowAnnotations:
+    subtotal: Optional[int] = None
+
+    @classmethod
+    def parse_text_line(
+        cls,
+        text_line: TextLine,
+        *,
+        logger: Optional[logging.Logger] = None,
+    ) -> Optional[Self]:
+        logger = logger or logging.Logger(__name__)
+        annotations = {}
+        # split text
+        for arg in (arg.strip(" ") for arg in text_line.text.split(",")):
+            # subtotal
+            if match := re.fullmatch(r"=(?P<subtotal>-?[0-9]+)", arg):
+                if "subtotal" in annotations:
+                    logger.warning(
+                        "There are multiple subtotal annoations: %s",
+                        text_line,
+                    )
+                annotations["subtotal"] = int(match.group("subtotal"))
+            # unexpected annotation
+            else:
+                logger.error("Unexpected annotation %s %s", repr(arg), text_line)
+                return None
+        return cls(**annotations)
+
+
+@dataclasses.dataclass(frozen=True)
 class PaymentTableRow:
     key: Optional[PaymentTableKey]
     item: Optional[PaymentItem]
     text_line: TextLine
+    annotations: Optional[PaymentTableRowAnnotations] = None
 
     def is_empty(self) -> bool:
         return self.key is None and self.item is None
@@ -214,18 +256,14 @@ class PaymentTableRow:
     ) -> Optional[Self]:
         # logger
         logger = logger or logging.getLogger(__name__)
-        logger.debug("Parse %s", line.message())
+        logger.debug("Parse %s", line)
         # match
         match = re.match(
             Payment.pattern(date_format=_to_date_format(date), allow_empty=True),
             line.text,
         )
         if match is None:
-            logger.error(
-                "Failed to parse as %s: %s",
-                cls.__name__,
-                line.message(),
-            )
+            logger.error("Failed to parse as %s: %s", cls.__name__, line)
             return None
         groups = match.groupdict()
         # key
@@ -253,11 +291,22 @@ class PaymentTableRow:
                 price=int(groups["price"]),
                 text_line=line,
             )
+        # annotations
+        annotations: Optional[PaymentTableRowAnnotations] = None
+        if (
+            groups.get("annotations", None) is not None
+            and (annotations_text := line.slice(groups["annotations"])) is not None
+        ):
+            annotations = PaymentTableRowAnnotations.parse_text_line(
+                annotations_text,
+                logger=logger,
+            )
         # row
         row = cls(
             key=key,
             item=item,
             text_line=line,
+            annotations=annotations,
         )
         logger.debug("row: %s", row)
         return row
@@ -320,7 +369,7 @@ class PaymentTable:
                 logger=logger,
             )
             if row is None:
-                logger.error("Abort parsing on %s", line.message())
+                logger.error("Abort parsing on %s", line)
                 break
             rows.append(row)
         return cls(
@@ -391,7 +440,7 @@ def search_payment_tables(
                     logger.error(
                         "An alignment line(%s) is expected but got %s",
                         alignment,
-                        line.message(),
+                        line,
                     )
                     # reset
                     header_line = None
@@ -449,6 +498,7 @@ class _PaymentTableParser:
         self,
         row: PaymentTableRow,
     ) -> None:
+        # pylint: disable=too-many-branches
         # update last row
         last_row, self._last_row = self._last_row, row
         # empty row
@@ -470,16 +520,18 @@ class _PaymentTableParser:
                 "The first row is not empty",
                 row.text_line,
             )
+            # key only
+            if row.item is None:
+                self._logger.error("The row has only the key: %s", row.text_line)
+                return
             # key & item
-            if row.key is not None and row.item is not None:
+            if row.key is not None:
                 if self._payment is not None:
                     self._result.append(self._payment)
                     self._payment = None
                 key = row.key.to_payment_key(date=self._date)
                 if key is None:
-                    self._logger.error(
-                        "Failed to parse a key: %s", row.text_line.message()
-                    )
+                    self._logger.error("Failed to parse a key: %s", row.text_line)
                     return
                 # check: key has valid datetime
                 try:
@@ -487,7 +539,7 @@ class _PaymentTableParser:
                 except ValueError:
                     self._logger.error(
                         "Invalid datetime: %s",
-                        row.text_line.message(),
+                        row.text_line,
                     )
                     return
                 # format check: The timeline is wrong
@@ -508,15 +560,24 @@ class _PaymentTableParser:
                     )
                 self._payment = Payment(
                     key=key,
-                    items=[row.item],
+                    items=[],
                 )
-            # item
-            elif row.item is not None:
-                if self._payment is not None:
-                    self._payment.items.append(row.item)
+            # add item to payment
+            if self._payment is not None:
+                self._payment.items.append(row.item)
+                # check: annotations
+                if row.annotations is not None:
+                    # check: subtotal
+                    if row.annotations.subtotal is not None:
+                        if self._payment.total_price() != row.annotations.subtotal:
+                            self._logger.warning(
+                                "Mismatch subtotals between sum(%d) and annotation(%d): %s",
+                                self._payment.total_price(),
+                                row.annotations.subtotal,
+                                row.text_line,
+                            )
             else:
-                pass
-                # error: item only
+                self._logger.error("The item has no related key: %s", row.text_line)
 
     def result(self) -> list[Payment]:
         # format check
@@ -547,7 +608,7 @@ class _PaymentTableParser:
     ) -> None:
         if self._formatted and has_error:
             if line is not None:
-                self._logger.warning("%s: %s", message, line.message())
+                self._logger.warning("%s: %s", message, line)
             else:
                 self._logger.warning(message)
 
